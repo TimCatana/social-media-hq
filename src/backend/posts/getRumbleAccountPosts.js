@@ -1,28 +1,25 @@
 const axios = require('axios');
 const fs = require('fs').promises;
 const path = require('path');
-const { getRumbleToken } = require('../auth/rumbleAuth');
-const { loadConfig, saveConfig } = require('../auth/authUtils');
-const { log } = require('../logging/logUtils');
+const { log } = require('../utils/logUtils');
 
 const CSV_DIR = path.join(__dirname, '..', '..', '..', 'bin', 'csv');
 
-async function getRumbleAccountPosts(account, isMyAccount, metric = 'likes') {
-  const config = await loadConfig();
-  const accessToken = await getRumbleToken(config);
-  const csvPath = path.join(CSV_DIR, 'rumble_competitor_analysis.csv');
+async function getRumbleAccountPosts(account, isMyAccount, metric = 'likes', config, verbose = false) {
+  const accessToken = config.tokens.rumble?.token;
+  const csvPath = path.join(CSV_DIR, `rumble_posts_${account.replace(/[^a-zA-Z0-9]/g, '_')}.csv`);
 
   const validMetrics = ['likes', 'comments', 'views', 'engagement'];
   if (!validMetrics.includes(metric)) {
     log('WARN', `Unsupported metric '${metric}' for Rumble; defaulting to 'likes'`);
+    if (verbose) log('VERBOSE', `Metric validation: ${metric} not in ${validMetrics.join(', ')}`);
     metric = 'likes';
   }
 
   try {
-    const userId = isMyAccount ? process.env.RUMBLE_USER_ID : account.replace('@', '');
-    if (!userId) throw new Error('RUMBLE_USER_ID not set in .env for my account');
-
+    const userId = account.replace('@', '');
     // Hypothetical API (no public API as of March 2025)
+    if (verbose) log('VERBOSE', `Fetching Rumble videos for ${userId} (hypothetical API)`);
     const response = await axios.get(`https://api.rumble.com/v1/user/${userId}/videos`, {
       headers: { Authorization: `Bearer ${accessToken}` },
       params: { limit: 100 },
@@ -32,25 +29,30 @@ async function getRumbleAccountPosts(account, isMyAccount, metric = 'likes') {
     const postData = videos.map(video => ({
       id: video.id,
       created_time: video.created_at,
+      title: video.title || '',
+      description: video.description || '',
+      media_url: video.video_url || '',
       likes: video.likes || 0,
       comments: video.comments || 0,
       views: video.views || 0,
       engagement: (video.likes || 0) + (video.comments || 0),
     }));
 
+    if (verbose) log('VERBOSE', `Retrieved ${postData.length} videos for ${account}`);
     postData.sort((a, b) => b[metric] - a[metric]);
 
-    const csvHeader = 'Video ID,Created Time,Likes,Comments,Views\n';
+    const csvHeader = 'Video ID,Created Time,Title,Description,Media URL,Likes,Comments,Views,Engagement\n';
     const csvRows = postData.map(post => 
-      `${post.id},${post.created_time},${post.likes},${post.comments},${post.views}`
+      `"${post.id}","${post.created_time}","${post.title.replace(/"/g, '""')}","${post.description.replace(/"/g, '""')}","${post.media_url}",${post.likes},${post.comments},${post.views},${post.engagement}`
     ).join('\n');
     await fs.writeFile(csvPath, csvHeader + csvRows);
 
-    log('INFO', `Rumble videos sorted by ${metric} saved to ${csvPath}`);
-    await saveConfig(config);
+    log('INFO', `Rumble videos for ${account} sorted by ${metric} saved to ${csvPath}`);
+    if (verbose) log('VERBOSE', `CSV written with ${postData.length} rows`);
     return csvPath;
   } catch (error) {
-    log('ERROR', `Rumble account posts retrieval failed: ${error.response ? JSON.stringify(error.response.data) : error.message}`);
+    log('ERROR', `Rumble posts retrieval failed for ${account}: ${error.response ? JSON.stringify(error.response.data) : error.message}`);
+    if (verbose) log('VERBOSE', `Error details: ${error.stack}`);
     throw error;
   }
 }

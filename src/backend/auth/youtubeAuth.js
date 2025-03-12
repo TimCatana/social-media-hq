@@ -1,8 +1,8 @@
 const prompts = require('prompts');
 const axios = require('axios');
 const { DateTime } = require('luxon');
-const { TokenManager, saveConfig } = require('./authUtils');
-const { log } = require('../logging/logUtils'); // Updated to logUtils
+const { TokenManager, saveConfig } = require('../utils/authUtils');
+const { log } = require('../utils/logUtils');
 
 async function promptForUserToken() {
   const { userAccessToken } = await prompts({
@@ -26,8 +26,8 @@ async function refreshYouTubeToken(refreshToken, config) {
     const response = await axios.post('https://oauth2.googleapis.com/token', {
       grant_type: 'refresh_token',
       refresh_token: refreshToken,
-      client_id: process.env.YOUTUBE_CLIENT_ID,
-      client_secret: process.env.YOUTUBE_CLIENT_SECRET
+      client_id: config.platforms.youtube.YOUTUBE_CLIENT_ID,
+      client_secret: config.platforms.youtube.YOUTUBE_CLIENT_SECRET
     });
     const newAccessToken = response.data.access_token;
     const expiresIn = response.data.expires_in;
@@ -43,9 +43,9 @@ async function getYouTubeToken(config) {
   const tokenManager = new TokenManager('youtube', config);
   const existingToken = tokenManager.getToken();
 
-  if (existingToken && DateTime.fromISO(existingToken.expiresAt) > DateTime.now().plus({ days: 5 })) {
-    log('INFO', `YouTubeAuth: Using existing token: ${existingToken.token.substring(0, 10)}...`);
-    return existingToken.token;
+  if (tokenManager.isTokenValid()) {
+    log('INFO', `YouTubeAuth: Using existing token: ${tokenManager.getToken().token.substring(0, 10)}...`);
+    return tokenManager.getToken().token;
   }
 
   if (existingToken && existingToken.refreshToken) {

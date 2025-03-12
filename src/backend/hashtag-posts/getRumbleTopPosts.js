@@ -1,14 +1,16 @@
 const axios = require('axios');
-const { log } = require('../logging/logUtils');
+const { log } = require('../utils/logUtils');
 
-async function getRumbleTopPosts(hashtag, token, metric) {
-  if (!['likes', 'comments', 'views', 'engagement'].includes(metric)) {
+async function getRumbleTopPosts(hashtag, token, metric, verbose = false) {
+  const validMetrics = ['likes', 'comments', 'views', 'engagement'];
+  if (!validMetrics.includes(metric)) {
     log('WARN', `Unsupported metric '${metric}' for Rumble; defaulting to 'engagement'`);
+    if (verbose) log('VERBOSE', `Metric validation: ${metric} not in ${validMetrics.join(', ')}`);
     metric = 'engagement';
   }
 
   try {
-    // Hypothetical Rumble API (no public API exists as of March 2025)
+    // Hypothetical API (no public API as of March 2025)
     const response = await axios.get('https://api.rumble.com/v1/search', {
       headers: { Authorization: `Bearer ${token}` },
       params: {
@@ -16,11 +18,13 @@ async function getRumbleTopPosts(hashtag, token, metric) {
         limit: 100,
       },
     });
-    let videos = response.data.videos || [];
+    const videos = response.data.videos || [];
+    if (verbose) log('VERBOSE', `Fetched ${videos.length} videos from Rumble API`);
 
-    // Normalize and sort videos (hypothetical metrics)
-    videos = videos.map(video => ({
+    const normalizedVideos = videos.map(video => ({
       id: video.id,
+      created_time: video.created_at || '',
+      title: video.title || '',
       url: video.url || `https://rumble.com/v${video.id}`,
       likes: video.likes || 0,
       comments: video.comments || 0,
@@ -28,10 +32,12 @@ async function getRumbleTopPosts(hashtag, token, metric) {
       engagement: (video.likes || 0) + (video.comments || 0),
     }));
 
-    videos.sort((a, b) => b[metric] - a[metric]);
-    return videos.slice(0, 10);
+    if (verbose) log('VERBOSE', `Retrieved ${normalizedVideos.length} videos for hashtag '${hashtag}'`);
+    normalizedVideos.sort((a, b) => b[metric] - a[metric]);
+    return normalizedVideos.slice(0, 10);
   } catch (error) {
     log('ERROR', `Rumble top posts retrieval failed: ${error.response ? JSON.stringify(error.response.data) : error.message}`);
+    if (verbose) log('VERBOSE', `Error details: ${error.stack}`);
     throw error;
   }
 }

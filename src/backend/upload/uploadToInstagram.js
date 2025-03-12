@@ -1,10 +1,10 @@
 const axios = require('axios');
 const fs = require('fs').promises;
-const { log } = require('../logging/logUtils');
+const { log } = require('../utils/logUtils');
 
 async function postToInstagram(post) {
-  const { imageUrl, caption, hashtags, location, originalTime, accessToken, uploadHistoryPath, uploadedLogPath } = post;
-  const igUserId = process.env.INSTAGRAM_BUSINESS_ACCOUNT_ID;
+  const { imageUrl, caption, hashtags, location, originalTime, accessToken, uploadHistoryPath, uploadedLogPath, config } = post;
+  const igUserId = config.platforms.instagram.INSTAGRAM_BUSINESS_ACCOUNT_ID;
 
   const isVideo = /\.(mp4|mov)$/i.test(imageUrl);
   let success = false;

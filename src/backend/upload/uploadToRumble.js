@@ -1,6 +1,6 @@
 const axios = require('axios');
 const fs = require('fs').promises;
-const { log } = require('../logging/logUtils');
+const { log } = require('../utils/logUtils');
 
 async function postToRumble(post) {
   const { imageUrl, caption, hashtags, location, duration, originalTime, accessToken, uploadHistoryPath, uploadedLogPath } = post;
@@ -14,13 +14,14 @@ async function postToRumble(post) {
   let uploadTime = '';
 
   try {
-    // Hypothetical Rumble API (no public API as of March 2025)
+    log('WARN', 'Rumble API is hypothetical; no public API available as of March 2025');
+    const videoData = await axios.get(imageUrl, { responseType: 'arraybuffer' }).then(res => res.data);
     const response = await axios.post(
-      'https://api.rumble.com/v1/videos/upload', // Placeholder
+      'https://api.rumble.com/v1/videos/upload', // Hypothetical endpoint
       {
         title: caption,
-        description: `${hashtags ? hashtags + ' ' : ''}${location ? location : ''}`,
-        video_url: imageUrl,
+        description: `${hashtags ? hashtags + ' ' : ''}${location || ''}`,
+        video_data: Buffer.from(videoData).toString('base64'),
         is_short: duration > 0 && duration <= 60,
       },
       {
@@ -32,7 +33,7 @@ async function postToRumble(post) {
     log('INFO', `Rumble video post successful at ${uploadTime}: ${response.data.id}`);
     success = true;
   } catch (error) {
-    log('ERROR', `Rumble video post failed: ${error.response ? JSON.stringify(error.response.data) : error.message}`);
+    log('ERROR', `Rumble video post failed: ${error.response ? JSON.stringify(error.response.data) : error.message || error}`);
   }
 
   const logEntry = `${originalTime.toISOString()}\t${imageUrl}\t${caption}\t${hashtags || ''}\t${location || ''}\t${success ? 'Yes' : 'No'}\t${uploadTime || ''}\n`;

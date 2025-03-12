@@ -1,10 +1,10 @@
 const axios = require('axios');
 const fs = require('fs').promises;
-const { log } = require('../logging/logUtils');
+const { log } = require('../utils/logUtils');
 
 async function postToThreads(post) {
-  const { imageUrl, caption, hashtags, location, originalTime, accessToken, uploadHistoryPath, uploadedLogPath } = post;
-  const userId = process.env.THREADS_USER_ID || process.env.INSTAGRAM_BUSINESS_ACCOUNT_ID;
+  const { imageUrl, caption, hashtags, location, originalTime, accessToken, uploadHistoryPath, uploadedLogPath, config } = post;
+  const userId = config.platforms.threads.INSTAGRAM_BUSINESS_ACCOUNT_ID;
 
   const isVideo = /\.(mp4|mov)$/i.test(imageUrl);
   let success = false;

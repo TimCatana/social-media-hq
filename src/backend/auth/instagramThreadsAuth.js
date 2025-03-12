@@ -1,8 +1,8 @@
 const prompts = require('prompts');
 const axios = require('axios');
 const { DateTime } = require('luxon');
-const { TokenManager, saveConfig } = require('./authUtils');
-const { log } = require('../logging/logUtils'); // Updated to logUtils
+const { TokenManager, saveConfig } = require('../utils/authUtils');
+const { log } = require('../utils/logUtils');
 
 async function promptForInstagramThreadsUserToken() {
   const { instagramThreadsUserAccessToken } = await prompts({
@@ -26,8 +26,8 @@ async function exchangeForInstagramThreadsLongLivedToken(shortLivedToken, config
     const response = await axios.get('https://graph.facebook.com/v20.0/oauth/access_token', {
       params: {
         grant_type: 'fb_exchange_token',
-        client_id: process.env.APP_ID,
-        client_secret: process.env.APP_SECRET,
+        client_id: config.platforms.instagram.APP_ID, // Shared with Instagram
+        client_secret: config.platforms.instagram.APP_SECRET,
         fb_exchange_token: shortLivedToken
       }
     });
@@ -42,20 +42,19 @@ async function exchangeForInstagramThreadsLongLivedToken(shortLivedToken, config
 }
 
 async function getInstagramThreadsToken(config) {
-  const instagramThreadsTokenManager = new TokenManager('instagram-threads', config);
-  const existingInstagramThreadsToken = instagramThreadsTokenManager.getToken();
+  const tokenManager = new TokenManager('instagram-threads', config);
 
-  if (existingInstagramThreadsToken && DateTime.fromISO(existingInstagramThreadsToken.expiresAt) > DateTime.now().plus({ days: 5 })) {
-    log('INFO', `InstagramThreadsAuth: Using existing token: ${existingInstagramThreadsToken.token.substring(0, 10)}...`);
-    return existingInstagramThreadsToken.token;
+  if (tokenManager.isTokenValid()) {
+    log('INFO', `InstagramThreadsAuth: Using existing token: ${tokenManager.getToken().token.substring(0, 10)}...`);
+    return tokenManager.getToken().token;
   }
 
-  const instagramThreadsShortLivedToken = await promptForInstagramThreadsUserToken();
-  const { token: instagramThreadsLongLivedToken, expiresAt } = await exchangeForInstagramThreadsLongLivedToken(instagramThreadsShortLivedToken, config);
+  const shortLivedToken = await promptForInstagramThreadsUserToken();
+  const { token: longLivedToken, expiresAt } = await exchangeForInstagramThreadsLongLivedToken(shortLivedToken, config);
 
-  instagramThreadsTokenManager.setToken(instagramThreadsLongLivedToken, expiresAt);
+  tokenManager.setToken(longLivedToken, expiresAt);
   await saveConfig(config);
-  return instagramThreadsLongLivedToken;
+  return longLivedToken;
 }
 
 module.exports = { getInstagramThreadsToken };

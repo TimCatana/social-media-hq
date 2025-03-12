@@ -1,10 +1,10 @@
 const axios = require('axios');
 const fs = require('fs').promises;
-const { log } = require('../logging/logUtils');
+const { log } = require('../utils/logUtils');
 
 async function postToFacebook(post) {
-  const { imageUrl, caption, hashtags, location, originalTime, accessToken, uploadHistoryPath, uploadedLogPath } = post;
-  const pageId = process.env.FACEBOOK_PAGE_ID;
+  const { imageUrl, caption, hashtags, location, originalTime, accessToken, uploadHistoryPath, uploadedLogPath, config } = post;
+  const pageId = config.platforms.facebook.PAGE_ID;
 
   const isVideo = /\.(mp4|mov)$/i.test(imageUrl);
   let success = false;
@@ -13,7 +13,6 @@ async function postToFacebook(post) {
   try {
     const params = {
       access_token: accessToken,
-      published: true,
       message: `${caption}${hashtags ? ' ' + hashtags : ''}${location ? `\nLocation: ${location}` : ''}`,
     };
     const url = isVideo 

@@ -1,6 +1,6 @@
 const axios = require('axios');
 const fs = require('fs').promises;
-const { log } = require('../logging/logUtils');
+const { log } = require('../utils/logUtils');
 
 async function postToTikTok(post) {
   const { imageUrl, caption, hashtags, originalTime, accessToken, uploadHistoryPath, uploadedLogPath } = post;
@@ -17,10 +17,10 @@ async function postToTikTok(post) {
     const response = await axios.post(
       'https://open.tiktokapis.com/v2/post/publish/video/init/',
       {
-        source_info: { source: 'FILE_UPLOAD', video_url: imageUrl },
+        source_info: { source: 'PULL_FROM_URL', video_url: imageUrl },
         post_info: {
           title: caption,
-          description: `${hashtags ? hashtags : ''}`,
+          description: hashtags ? hashtags : '',
           disable_comment: false,
           disable_duet: false,
           disable_stitch: false,

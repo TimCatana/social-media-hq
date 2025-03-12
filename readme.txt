@@ -1,3 +1,2 @@
-Ideas To Implement:
-
-- Broken link checker for pintrest
+- Broken link checker for Pinterest
+- trend analysis for hashtags (get seasonal hashtags with peak season, get hashtags that are beginning to trend)

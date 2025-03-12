@@ -1,6 +1,6 @@
 const axios = require('axios');
 const fs = require('fs').promises;
-const { log } = require('../logging/logUtils');
+const { log } = require('../utils/logUtils');
 
 async function postToPinterest(post) {
   const { imageUrl, caption, hashtags, location, title, boardId, link, altText, originalTime, accessToken, uploadHistoryPath, uploadedLogPath } = post;
@@ -18,7 +18,7 @@ async function postToPinterest(post) {
         title: title || caption || 'Untitled',
         description: description || 'No description',
         media_source: {
-          source_type: isVideo ? 'video' : 'image',
+          source_type: isVideo ? 'video_url' : 'image_url',
           url: imageUrl,
         },
         link: link || null,

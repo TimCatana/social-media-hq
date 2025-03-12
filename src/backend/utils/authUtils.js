@@ -1,15 +1,17 @@
 const fs = require('fs').promises;
 const path = require('path');
-const { log } = require('../logging/logUtils');
+const { DateTime } = require('luxon');
+const { log } = require('./logUtils');
 
-const CONFIG_PATH = path.join(__dirname, '..', '..', '..', 'json', 'config.json'); // Two levels up from authUtils.js
+// Adjusted to root/json/config.json
+const CONFIG_PATH = path.join(__dirname, '..', '..', '..', 'json', 'config.json');
 
 async function loadConfig() {
   try {
     const configData = await fs.readFile(CONFIG_PATH, 'utf8');
     return JSON.parse(configData);
   } catch (error) {
-    log('ERROR', `authUtils: Config file not found, returning empty tokens: ${error.message}`);
+    log('INFO', `authUtils: Config file not found, initializing empty config: ${error.message}`);
     return { tokens: {} };
   }
 }
@@ -36,8 +38,14 @@ class TokenManager {
     return this.config.tokens[this.platform];
   }
 
-  setToken(token, expiresAt) {
+  setToken(token, expiresAt, refreshToken = null) {
     this.config.tokens[this.platform] = { token, expiresAt };
+    if (refreshToken) this.config.tokens[this.platform].refreshToken = refreshToken;
+  }
+
+  isTokenValid() {
+    const tokenData = this.getToken();
+    return tokenData && DateTime.fromISO(tokenData.expiresAt) > DateTime.now().plus({ days: 5 });
   }
 }
 

@@ -1,7 +1,7 @@
 const prompts = require('prompts');
 const { DateTime } = require('luxon');
-const { TokenManager, saveConfig } = require('./authUtils');
-const { log } = require('../logging/logUtils'); // Updated to logUtils
+const { TokenManager, saveConfig } = require('../utils/authUtils');
+const { log } = require('../utils/logUtils');
 
 async function promptForUserToken() {
   const { userAccessToken } = await prompts({
@@ -22,11 +22,10 @@ async function promptForUserToken() {
 
 async function getRumbleToken(config) {
   const tokenManager = new TokenManager('rumble', config);
-  const existingToken = tokenManager.getToken();
 
-  if (existingToken && DateTime.fromISO(existingToken.expiresAt) > DateTime.now().plus({ days: 5 })) {
-    log('INFO', `RumbleAuth: Using existing token: ${existingToken.token.substring(0, 10)}...`);
-    return existingToken.token;
+  if (tokenManager.isTokenValid()) {
+    log('INFO', `RumbleAuth: Using existing token: ${tokenManager.getToken().token.substring(0, 10)}...`);
+    return tokenManager.getToken().token;
   }
 
   const userAccessToken = await promptForUserToken();

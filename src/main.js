@@ -13,7 +13,7 @@ const {
   scheduleYouTubePosts,
   scheduleRumblePosts,
   scheduleTwitterPosts
-} = require('./domain/scheduler');
+} = require('./feature/scheduler');
 const {
   getFacebookAccountPosts,
   getInstagramAccountPosts,
@@ -22,11 +22,10 @@ const {
   getThreadsAccountPosts,
   getYouTubeAccountPosts,
   getRumbleAccountPosts,
-  getTwitterAccountPosts,
-  ACCOUNT_POST_METRICS
-} = require('./domain/accountPosts');
-const { getTopPosts, COMMON_METRICS } = require('./domain/topHashtagPosts');
-const { loadConfig, saveConfig } = require('./backend/auth/authUtils');
+  getTwitterAccountPosts
+} = require('./feature/accountPosts');
+const { getTopPosts, COMMON_METRICS } = require('./feature/topHashtagPosts');
+const { loadConfig, saveConfig } = require('./backend/utils/authUtils');
 const { getFacebookToken } = require('./backend/auth/facebookAuth');
 const { getInstagramThreadsToken } = require('./backend/auth/instagramThreadsAuth');
 const { getPinterestToken } = require('./backend/auth/pinterestAuth');
@@ -34,10 +33,10 @@ const { getTikTokToken } = require('./backend/auth/tiktokAuth');
 const { getTwitterToken } = require('./backend/auth/twitterAuth');
 const { getYouTubeToken } = require('./backend/auth/youtubeAuth');
 const { getRumbleToken } = require('./backend/auth/rumbleAuth');
-const { log, setupConsoleLogging } = require('./backend/logging/logUtils');
+const { log, setupConsoleLogging } = require('./backend/utils/logUtils');
 
 // Configuration
-const BASE_DIR = path.join(__dirname, '..'); // One level up from main.js
+const BASE_DIR = path.join(__dirname, '..');
 const BIN_DIR = path.join(BASE_DIR, 'bin');
 const IMG_DIR = path.join(BIN_DIR, 'img');
 const VID_DIR = path.join(BIN_DIR, 'vid');
@@ -57,7 +56,31 @@ const CSV_FORMATS = {
   x: 'Publish Date,Media URL,Caption,Hashtags,Location',
 };
 
-function displayCsvFormat(platform) {
+// Platform-specific config requirements
+const PLATFORM_CONFIGS = {
+  facebook: ['APP_ID', 'APP_SECRET', 'PAGE_ID'],
+  instagram: ['APP_ID', 'APP_SECRET', 'INSTAGRAM_BUSINESS_ACCOUNT_ID'],
+  pinterest: ['PINTEREST_APP_ID', 'PINTEREST_APP_SECRET'],
+  tiktok: ['TIKTOK_CLIENT_KEY', 'TIKTOK_CLIENT_SECRET'],
+  threads: ['APP_ID', 'APP_SECRET', 'INSTAGRAM_BUSINESS_ACCOUNT_ID'],
+  youtube: ['YOUTUBE_CLIENT_ID', 'YOUTUBE_CLIENT_SECRET'],
+  rumble: [], // Hypothetical; no API, so no config needed yet
+  x: [] // Twitter uses bearer token directly
+};
+
+// Platform-specific metrics (all gathered data points that can be sorted)
+const PLATFORM_METRICS = {
+  facebook: ['likes', 'comments', 'shares', 'engagement'],
+  instagram: ['likes', 'comments', 'engagement'],
+  pinterest: ['likes', 'comments', 'engagement'],
+  tiktok: ['likes', 'comments', 'views', 'shares', 'engagement'],
+  threads: ['likes', 'comments', 'engagement'],
+  youtube: ['likes', 'comments', 'views', 'engagement'],
+  rumble: ['likes', 'comments', 'views', 'engagement'], // Hypothetical
+  x: ['likes', 'comments', 'views', 'retweets', 'engagement'],
+};
+
+function displayCsvFormat(platform, verbose = false) {
   log('INFO', `\nCSV Format for ${platform.charAt(0).toUpperCase() + platform.slice(1)}:`);
   log('INFO', `"${CSV_FORMATS[platform]}"`);
   log('INFO', 'Notes:');
@@ -66,46 +89,85 @@ function displayCsvFormat(platform) {
   if (platform === 'youtube' || platform === 'rumble') {
     log('INFO', '- Duration: Optional, in seconds; used to classify short (<60s) vs long videos');
   }
+  if (verbose) {
+    log('VERBOSE', `Full CSV format details displayed for ${platform}`);
+  }
   log('INFO', '\n');
 }
 
 // Help message
-function displayHelp() {
+function displayHelp(verbose = false) {
   const helpText = `
 main.js - Social media tool for scheduling and data retrieval.
 
 Usage:
-  node main.js [--help]
+  node main.js [--help] [--verbose]
 
 Options:
-  --help  Display this help and exit
+  --help     Display this help and exit
+  --verbose  Enable verbose logging
 
 Features:
   - Scheduling: Schedules posts for a specific platform using a CSV file.
   - Get Top Posts by Hashtag/Keyword: Retrieves top posts or videos for a hashtag/keyword.
-  - Get Account Post Data: Retrieves post data for an account.
+  - Get Account Post Data: Retrieves all post data for an account (yours or another's).
 
 Supported Platforms: Facebook, Instagram, Pinterest, TikTok, Threads, YouTube, Rumble, X (Twitter)
 
 Requirements:
-  - .env file with credentials (e.g., APP_ID, APP_SECRET, PAGE_ID, etc.)
+  - Config stored in ${path.join(JSON_DIR, 'config.json')}
 
 Logs:
   - Console: ${LOG_DIR}/main-<timestamp>.log
   - Scheduler: ${LOG_DIR}/scheduler-<platform>-<timestamp>.log
   `;
   log('INFO', helpText);
+  if (verbose) {
+    log('VERBOSE', 'Help displayed with verbose mode enabled');
+  }
   process.exit(0);
 }
 
 // Ensure directories exist
-async function ensureDirectories() {
+async function ensureDirectories(verbose = false) {
   const dirs = [BIN_DIR, IMG_DIR, VID_DIR, CSV_DIR, JSON_DIR, LOG_DIR];
   await Promise.all(dirs.map(dir => fs.promises.mkdir(dir, { recursive: true }).catch(err => {
     log('ERROR', `Failed to create directory ${dir}: ${err.message}`);
     process.exit(1);
   })));
   log('INFO', 'All required directories are present.');
+  if (verbose) {
+    log('VERBOSE', `Checked directories: ${dirs.join(', ')}`);
+  }
+}
+
+// Prompt for missing config values
+async function promptForConfig(config, platform) {
+  if (!config.platforms) config.platforms = {};
+  if (!config.platforms[platform]) config.platforms[platform] = {};
+
+  const requiredFields = PLATFORM_CONFIGS[platform];
+  for (const field of requiredFields) {
+    if (!config.platforms[platform][field]) {
+      const response = await prompts({
+        type: 'text',
+        name: 'value',
+        message: `Enter ${field} for ${platform} (required):`,
+        validate: value => value ? true : `${field} is required`,
+      }, { onCancel: () => { throw new Error('User cancelled config prompt'); } });
+
+      if (!response.value) {
+        log('INFO', `User cancelled ${field} prompt for ${platform}`);
+        throw new Error('User chose to go back');
+      }
+
+      config.platforms[platform][field] = response.value;
+      log('INFO', `${field} for ${platform} set and will be saved to config.json`);
+    }
+  }
+
+  await saveConfig(config);
+  return config;
 }
 
 // Platform definitions
@@ -145,21 +207,23 @@ const TOKENS = {
 // Main execution
 (async () => {
   try {
-    setupConsoleLogging(); // Call early, though it’s a no-op with centralized setup
-    log('DEBUG', 'Starting main execution');
     const args = process.argv.slice(2);
-    if (args.includes('--help')) return displayHelp();
+    const verbose = args.includes('--verbose');
+    await setupConsoleLogging(verbose); // Now async
+    log('DEBUG', 'Starting main execution');
+    if (args.includes('--help')) return displayHelp(verbose);
     if (args.includes('-v') || args.includes('--version')) {
-      log('INFO', 'Social Media HQ v1.0.0'); // Added version flag
+      log('INFO', 'Social Media HQ v1.0.0');
+      if (verbose) log('VERBOSE', 'Version checked');
       process.exit(0);
     }
 
     log('DEBUG', 'Ensuring directories');
-    await ensureDirectories();
-    log('DEBUG', 'Setting up console logging'); // Kept for clarity
+    await ensureDirectories(verbose);
     log('DEBUG', 'Loading config');
-    const config = await loadConfig();
+    let config = await loadConfig();
     log('DEBUG', `Config loaded: ${JSON.stringify(config)}`);
+    if (verbose) log('VERBOSE', 'Configuration loaded successfully');
     let state = 'mode';
 
     while (true) {
@@ -182,6 +246,7 @@ const TOKENS = {
         log('DEBUG', `Mode response: ${JSON.stringify(modeResponse)}`);
         if (modeResponse.mode === 'exit' || !modeResponse.mode) {
           log('INFO', 'Exiting.');
+          if (verbose) log('VERBOSE', 'User chose to exit');
           await saveConfig(config);
           process.exit(0);
         }
@@ -202,7 +267,7 @@ const TOKENS = {
             { title: 'YouTube', value: 'youtube' },
             { title: 'Rumble', value: 'rumble' },
             { title: 'X (Twitter)', value: 'x' },
-            { title: 'Go Back', value: 'back' },
+            { title: 'Back', value: 'back' },
           ],
           initial: 0,
         });
@@ -210,25 +275,48 @@ const TOKENS = {
         log('DEBUG', `Platform response: ${JSON.stringify(platformResponse)}`);
         if (!platformResponse.platform) {
           log('INFO', 'No platform selected. Exiting.');
+          if (verbose) log('VERBOSE', 'User cancelled platform selection');
           await saveConfig(config);
           process.exit(0);
         }
 
         if (platformResponse.platform === 'back') {
           state = 'mode';
+          if (verbose) log('VERBOSE', 'User chose to go back to main menu');
           continue;
         }
 
         const platform = platformResponse.platform;
-        displayCsvFormat(platform);
+        displayCsvFormat(platform, verbose);
+
+        try {
+          config = await promptForConfig(config, platform);
+        } catch (error) {
+          if (error.message === 'User chose to go back') {
+            log('INFO', `User opted to go back from ${platform} config prompt`);
+            state = 'mode';
+            continue;
+          }
+          log('ERROR', `Config setup failed for ${platform}: ${error.message}`);
+          state = 'mode';
+          continue;
+        }
 
         log('DEBUG', `Checking authentication for ${platform}`);
         let token;
         try {
           token = await TOKENS[platform](config);
           log('DEBUG', `Token obtained for ${platform}: ${token.substring(0, 10)}...`);
+          if (verbose) log('VERBOSE', `Authentication successful for ${platform}`);
         } catch (error) {
+          if (error.message === 'User chose to go back') {
+            log('INFO', `User opted to go back from ${platform} auth prompt`);
+            if (verbose) log('VERBOSE', 'User cancelled auth prompt');
+            state = 'mode';
+            continue;
+          }
           log('ERROR', `Authentication failed for ${platform}: ${error.message}`);
+          if (verbose) log('VERBOSE', `Auth error details: ${error.stack}`);
           state = 'mode';
           continue;
         }
@@ -237,15 +325,15 @@ const TOKENS = {
         const csvResponse = await prompts({
           type: 'text',
           name: 'csvPath',
-          message: `Prompt 2a: Enter the path to your ${platform} CSV file (or type "back" to return):`,
+          message: `Prompt 2a: Enter the path to your ${platform} CSV file (or press Enter to return):`,
           initial: path.join(CSV_DIR, `${platform}_posts.csv`),
           validate: async value => {
-            if (value.toLowerCase() === 'back') return true;
+            if (value === '') return true;
             try {
               await fs.promises.access(value);
               return true;
             } catch {
-              return 'File not found. Please enter a valid path or "back".';
+              return 'File not found. Please enter a valid path or press Enter.';
             }
           },
         });
@@ -253,25 +341,29 @@ const TOKENS = {
         log('DEBUG', `CSV response: ${JSON.stringify(csvResponse)}`);
         if (!csvResponse.csvPath) {
           log('INFO', 'No input provided. Exiting.');
+          if (verbose) log('VERBOSE', 'User cancelled CSV prompt');
           await saveConfig(config);
           process.exit(0);
         }
 
-        if (csvResponse.csvPath.toLowerCase() === 'back') {
-          state = 'scheduling';
+        if (csvResponse.csvPath === '') {
+          state = 'mode';
+          if (verbose) log('VERBOSE', 'User pressed Enter to return to main menu');
           continue;
         }
 
         log('INFO', `Scheduling posts for ${platform} with CSV: ${csvResponse.csvPath}`);
+        if (verbose) log('VERBOSE', `Starting scheduling process for ${platform}`);
         await SCHEDULERS[platform](csvResponse.csvPath, config);
-        log('INFO', 'Task completed. You can run the tool again.');
+        log('INFO', 'Task completed. You can run the tool again or keep it running for scheduled posts.');
+        if (verbose) log('VERBOSE', 'Scheduling task completed');
         state = 'mode';
       } else if (state === 'topposts') {
-        log('DEBUG', 'Prompting for topposts platform');
+        log('DEBUG', 'Prompting for platform selection for top posts');
         const platformResponse = await prompts({
           type: 'select',
           name: 'platform',
-          message: 'Prompt 1b: Choose a platform for getting top posts:',
+          message: 'Prompt 1c: Choose a platform to retrieve top posts from:',
           choices: [
             { title: 'Facebook', value: 'facebook' },
             { title: 'Instagram', value: 'instagram' },
@@ -281,7 +373,7 @@ const TOKENS = {
             { title: 'YouTube', value: 'youtube' },
             { title: 'Rumble', value: 'rumble' },
             { title: 'X (Twitter)', value: 'x' },
-            { title: 'Go Back', value: 'back' },
+            { title: 'Back', value: 'back' },
           ],
           initial: 0,
         });
@@ -289,86 +381,97 @@ const TOKENS = {
         log('DEBUG', `Platform response: ${JSON.stringify(platformResponse)}`);
         if (!platformResponse.platform) {
           log('INFO', 'No platform selected. Exiting.');
+          if (verbose) log('VERBOSE', 'User cancelled platform selection');
           await saveConfig(config);
           process.exit(0);
         }
 
         if (platformResponse.platform === 'back') {
           state = 'mode';
+          if (verbose) log('VERBOSE', 'User chose to go back to main menu');
           continue;
         }
 
         const platform = platformResponse.platform;
+
+        try {
+          config = await promptForConfig(config, platform);
+        } catch (error) {
+          if (error.message === 'User chose to go back') {
+            log('INFO', `User opted to go back from ${platform} config prompt`);
+            state = 'mode';
+            continue;
+          }
+          log('ERROR', `Config setup failed for ${platform}: ${error.message}`);
+          state = 'mode';
+          continue;
+        }
 
         log('DEBUG', `Checking authentication for ${platform}`);
         let token;
         try {
           token = await TOKENS[platform](config);
           log('DEBUG', `Token obtained for ${platform}: ${token.substring(0, 10)}...`);
+          if (verbose) log('VERBOSE', `Authentication successful for ${platform}`);
         } catch (error) {
+          if (error.message === 'User chose to go back') {
+            log('INFO', `User opted to go back from ${platform} auth prompt`);
+            if (verbose) log('VERBOSE', 'User cancelled auth prompt');
+            state = 'mode';
+            continue;
+          }
           log('ERROR', `Authentication failed for ${platform}: ${error.message}`);
+          if (verbose) log('VERBOSE', `Auth error details: ${error.stack}`);
           state = 'mode';
           continue;
         }
 
-        log('DEBUG', 'Prompting for hashtag');
-        const hashtagResponse = await prompts({
-          type: 'text',
-          name: 'hashtag',
-          message: 'Prompt 2b: Enter a hashtag or keyword (or "back" to return):',
-          validate: value => value.toLowerCase() === 'back' || !!value || 'Hashtag/keyword is required',
-        });
+        log('DEBUG', 'Prompting for hashtag/keyword and metric');
+        const topPostsResponse = await prompts([
+          {
+            type: 'text',
+            name: 'hashtag',
+            message: `Enter the hashtag or keyword for ${platform} (e.g., #example or keyword, press Enter to return):`,
+            validate: value => value ? true : 'Hashtag/keyword is required',
+          },
+          {
+            type: 'select',
+            name: 'metric',
+            message: 'Sort top posts by which metric?',
+            choices: PLATFORM_METRICS[platform].map(m => ({ title: m, value: m })),
+            initial: 0,
+          },
+        ]);
 
-        log('DEBUG', `Hashtag response: ${JSON.stringify(hashtagResponse)}`);
-        if (!hashtagResponse.hashtag) {
-          log('INFO', 'No hashtag provided. Exiting.');
+        log('DEBUG', `Top posts response: ${JSON.stringify(topPostsResponse)}`);
+        if (!topPostsResponse.hashtag || !topPostsResponse.metric) {
+          log('INFO', 'Incomplete input. Exiting.');
+          if (verbose) log('VERBOSE', 'User cancelled top posts prompt');
           await saveConfig(config);
           process.exit(0);
         }
 
-        if (hashtagResponse.hashtag.toLowerCase() === 'back') {
-          state = 'topposts';
+        if (topPostsResponse.hashtag === '') {
+          state = 'mode';
+          if (verbose) log('VERBOSE', 'User pressed Enter to return to main menu');
           continue;
         }
 
-        log('DEBUG', 'Prompting for metric');
-        const metricResponse = await prompts({
-          type: 'select',
-          name: 'metric',
-          message: 'Prompt 3b: Choose a metric to sort by:',
-          choices: COMMON_METRICS.map(metric => ({
-            title: metric.charAt(0).toUpperCase() + metric.slice(1),
-            value: metric,
-          })).concat([{ title: 'Go Back', value: 'back' }]),
-          initial: 0,
-        });
+        const hashtag = topPostsResponse.hashtag;
+        const metric = topPostsResponse.metric;
 
-        log('DEBUG', `Metric response: ${JSON.stringify(metricResponse)}`);
-        if (!metricResponse.metric) {
-          log('INFO', 'No metric selected. Exiting.');
-          await saveConfig(config);
-          process.exit(0);
-        }
-
-        if (metricResponse.metric === 'back') {
-          state = 'topposts';
-          continue;
-        }
-
-        log('INFO', `Retrieving top posts for ${platform} with hashtag/keyword: ${hashtagResponse.hashtag}, sorted by ${metricResponse.metric}`);
-        try {
-          const csvPath = await getTopPosts(platform, hashtagResponse.hashtag, metricResponse.metric, config);
-          log('INFO', `Top posts retrieved and saved to ${csvPath}`);
-        } catch (error) {
-          log('ERROR', `Failed to retrieve top posts for ${platform}: ${error.message}`);
-        }
+        log('INFO', `Retrieving top posts for ${platform} with hashtag/keyword: ${hashtag}, sorted by ${metric}`);
+        if (verbose) log('VERBOSE', `Starting top posts retrieval for ${platform}, hashtag: ${hashtag}, metric: ${metric}`);
+        const csvPath = await getTopPosts(platform, hashtag, metric, config, verbose);
+        log('INFO', `Top posts retrieval completed. Results saved to ${csvPath}`);
+        if (verbose) log('VERBOSE', 'Top posts retrieval task completed');
         state = 'mode';
       } else if (state === 'postdata') {
-        log('DEBUG', 'Prompting for postdata platform');
+        log('DEBUG', 'Prompting for platform selection for post data');
         const platformResponse = await prompts({
           type: 'select',
           name: 'platform',
-          message: 'Prompt 1c: Choose a platform for getting account post data:',
+          message: 'Prompt 1b: Choose a platform to retrieve post data from:',
           choices: [
             { title: 'Facebook', value: 'facebook' },
             { title: 'Instagram', value: 'instagram' },
@@ -378,7 +481,7 @@ const TOKENS = {
             { title: 'YouTube', value: 'youtube' },
             { title: 'Rumble', value: 'rumble' },
             { title: 'X (Twitter)', value: 'x' },
-            { title: 'Go Back', value: 'back' },
+            { title: 'Back', value: 'back' },
           ],
           initial: 0,
         });
@@ -386,115 +489,103 @@ const TOKENS = {
         log('DEBUG', `Platform response: ${JSON.stringify(platformResponse)}`);
         if (!platformResponse.platform) {
           log('INFO', 'No platform selected. Exiting.');
+          if (verbose) log('VERBOSE', 'User cancelled platform selection');
           await saveConfig(config);
           process.exit(0);
         }
 
         if (platformResponse.platform === 'back') {
           state = 'mode';
+          if (verbose) log('VERBOSE', 'User chose to go back to main menu');
           continue;
         }
 
         const platform = platformResponse.platform;
 
-        log('DEBUG', `Checking authentication for ${platform}`);
-        let token;
-        if (TOKENS[platform]) {
-          try {
-            token = await TOKENS[platform](config);
-            log('DEBUG', `Token obtained for ${platform}: ${token.substring(0, 10)}...`);
-          } catch (error) {
-            log('ERROR', `Authentication failed for ${platform}: ${error.message}`);
+        try {
+          config = await promptForConfig(config, platform);
+        } catch (error) {
+          if (error.message === 'User chose to go back') {
+            log('INFO', `User opted to go back from ${platform} config prompt`);
             state = 'mode';
             continue;
           }
-        }
-
-        log('DEBUG', 'Prompting for account type');
-        const accountTypeResponse = await prompts({
-          type: 'select',
-          name: 'accountType',
-          message: `Prompt 2c: Analyze ${platform} posts for:`,
-          choices: [
-            { title: 'My Account', value: 'my' },
-            { title: 'Public Account', value: 'public' },
-            { title: 'Go Back', value: 'back' },
-          ],
-          initial: 0,
-        });
-
-        log('DEBUG', `Account type response: ${JSON.stringify(accountTypeResponse)}`);
-        if (!accountTypeResponse.accountType) {
-          log('INFO', 'No account type selected. Exiting.');
-          await saveConfig(config);
-          process.exit(0);
-        }
-
-        if (accountTypeResponse.accountType === 'back') {
-          state = 'postdata';
+          log('ERROR', `Config setup failed for ${platform}: ${error.message}`);
+          state = 'mode';
           continue;
         }
 
-        log('DEBUG', 'Prompting for account');
-        const accountResponse = await prompts({
-          type: 'text',
-          name: 'account',
-          message: `Prompt 3c: Enter the ${platform} ${accountTypeResponse.accountType === 'my' ? 'account ID' : 'account handle or ID'} (e.g., @username or numeric ID, or "back" to return):`,
-          validate: value => value.toLowerCase() === 'back' || !!value || 'Account is required',
-        });
+        log('DEBUG', `Checking authentication for ${platform}`);
+        let token;
+        try {
+          token = await TOKENS[platform](config);
+          log('DEBUG', `Token obtained for ${platform}: ${token.substring(0, 10)}...`);
+          if (verbose) log('VERBOSE', `Authentication successful for ${platform}`);
+        } catch (error) {
+          if (error.message === 'User chose to go back') {
+            log('INFO', `User opted to go back from ${platform} auth prompt`);
+            if (verbose) log('VERBOSE', 'User cancelled auth prompt');
+            state = 'mode';
+            continue;
+          }
+          log('ERROR', `Authentication failed for ${platform}: ${error.message}`);
+          if (verbose) log('VERBOSE', `Auth error details: ${error.stack}`);
+          state = 'mode';
+          continue;
+        }
+
+        log('DEBUG', 'Prompting for account details');
+        const accountResponse = await prompts([
+          {
+            type: 'text',
+            name: 'account',
+            message: `Enter the ${platform} account handle (e.g., @username) or ID (or press Enter to return):`,
+            validate: value => value !== undefined ? true : 'Account is required',
+          },
+          {
+            type: 'select',
+            name: 'isMyAccount',
+            message: 'Is this your account?',
+            choices: [
+              { title: 'Yes', value: true },
+              { title: 'No', value: false },
+            ],
+            initial: 0,
+          },
+          {
+            type: 'select',
+            name: 'metric',
+            message: 'Sort posts by which metric?',
+            choices: PLATFORM_METRICS[platform].map(m => ({ title: m, value: m })),
+            initial: 0,
+          },
+        ]);
 
         log('DEBUG', `Account response: ${JSON.stringify(accountResponse)}`);
-        if (!accountResponse.account) {
-          log('INFO', 'No account provided. Exiting.');
+        if (!accountResponse.account || !('isMyAccount' in accountResponse) || !accountResponse.metric) {
+          log('INFO', 'Incomplete account input. Exiting.');
+          if (verbose) log('VERBOSE', 'User cancelled account prompt');
           await saveConfig(config);
           process.exit(0);
         }
 
-        if (accountResponse.account.toLowerCase() === 'back') {
-          state = 'postdata';
+        if (accountResponse.account === '') {
+          state = 'mode';
+          if (verbose) log('VERBOSE', 'User pressed Enter to return to main menu');
           continue;
         }
 
-        log('DEBUG', 'Prompting for metric');
-        const metricResponse = await prompts({
-          type: 'select',
-          name: 'metric',
-          message: `Prompt 4c: Sort ${platform} posts by:`,
-          choices: ACCOUNT_POST_METRICS.map(metric => ({
-            title: metric.charAt(0).toUpperCase() + metric.slice(1),
-            value: metric,
-          })).concat([{ title: 'Go Back', value: 'back' }]),
-          initial: 0,
-        });
-
-        log('DEBUG', `Metric response: ${JSON.stringify(metricResponse)}`);
-        if (!metricResponse.metric) {
-          log('INFO', 'No metric selected. Exiting.');
-          await saveConfig(config);
-          process.exit(0);
-        }
-
-        if (metricResponse.metric === 'back') {
-          state = 'postdata';
-          continue;
-        }
-
-        if (POSTS[platform]) {
-          log('INFO', `Retrieving post data for ${platform} ${accountTypeResponse.accountType === 'my' ? 'my account' : 'public account'}: ${accountResponse.account}, sorted by ${metricResponse.metric}`);
-          try {
-            const csvPath = await POSTS[platform](accountResponse.account, accountTypeResponse.accountType === 'my', metricResponse.metric);
-            log('INFO', `Post data retrieved and saved to ${csvPath}`);
-          } catch (error) {
-            log('ERROR', `Failed to retrieve post data for ${platform}: ${error.message}`);
-          }
-        } else {
-          log('INFO', `Get Account Post Data for ${platform} is not implemented yet.`);
-        }
+        log('INFO', `Retrieving post data for ${platform} account: ${accountResponse.account}`);
+        if (verbose) log('VERBOSE', `Starting post data retrieval for ${platform}, account: ${accountResponse.account}, metric: ${accountResponse.metric}`);
+        const csvPath = await POSTS[platform](accountResponse.account, accountResponse.isMyAccount, accountResponse.metric, config, verbose);
+        log('INFO', `Post data retrieval completed. Results saved to ${csvPath}`);
+        if (verbose) log('VERBOSE', 'Post data retrieval task completed');
         state = 'mode';
       }
     }
   } catch (err) {
     log('ERROR', `Unexpected error or interruption: ${err.message}`);
+    if (args.includes('--verbose')) log('VERBOSE', `Error stack: ${err.stack}`);
     try {
       const config = await loadConfig();
       await saveConfig(config);

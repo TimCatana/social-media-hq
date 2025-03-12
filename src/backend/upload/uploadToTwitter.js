@@ -1,6 +1,6 @@
 const axios = require('axios');
 const fs = require('fs').promises;
-const { log } = require('../logging/logUtils');
+const { log } = require('../utils/logUtils');
 
 async function postToTwitter(post) {
   const { imageUrl, caption, hashtags, location, originalTime, accessToken, uploadHistoryPath, uploadedLogPath } = post;
@@ -13,12 +13,16 @@ async function postToTwitter(post) {
     let mediaId = null;
     if (imageUrl) {
       const mediaData = await axios.get(imageUrl, { responseType: 'arraybuffer' }).then(res => Buffer.from(res.data));
-      const uploadUrl = isVideo 
-        ? 'https://upload.twitter.com/1.1/media/upload.json?media_category=tweet_video'
-        : 'https://upload.twitter.com/1.1/media/upload.json';
-
-      const uploadResponse = await axios.post(uploadUrl, mediaData, {
-        headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/octet-stream' },
+      const uploadResponse = await axios({
+        method: 'post',
+        url: isVideo 
+          ? 'https://upload.twitter.com/1.1/media/upload.json?media_category=tweet_video'
+          : 'https://upload.twitter.com/1.1/media/upload.json',
+        data: mediaData,
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          'Content-Type': 'application/octet-stream',
+        },
       });
       mediaId = uploadResponse.data.media_id_string;
       log('INFO', `Twitter ${isVideo ? 'video' : 'image'} uploaded: ${mediaId}`);
@@ -28,9 +32,13 @@ async function postToTwitter(post) {
     const tweetData = { text: tweetText };
     if (mediaId) tweetData.media = { media_ids: [mediaId] };
 
-    const tweetResponse = await axios.post('https://api.twitter.com/2/tweets', tweetData, {
-      headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
-    });
+    const tweetResponse = await axios.post(
+      'https://api.twitter.com/2/tweets',
+      tweetData,
+      {
+        headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+      }
+    );
 
     uploadTime = new Date().toISOString();
     log('INFO', `Twitter ${isVideo ? 'video' : 'image'} post successful at ${uploadTime}: ${tweetResponse.data.data.id}`);

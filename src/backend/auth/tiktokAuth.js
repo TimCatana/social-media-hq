@@ -1,8 +1,8 @@
 const prompts = require('prompts');
 const axios = require('axios');
 const { DateTime } = require('luxon');
-const { TokenManager, saveConfig } = require('./authUtils');
-const { log } = require('../logging/logUtils'); // Updated to logUtils
+const { TokenManager, saveConfig } = require('../utils/authUtils');
+const { log } = require('../utils/logUtils');
 
 async function promptForUserToken() {
   const { userAccessToken } = await prompts({
@@ -26,8 +26,8 @@ async function refreshTikTokToken(refreshToken, config) {
     const response = await axios.post('https://open.tiktokapis.com/v2/oauth/token/', {
       grant_type: 'refresh_token',
       refresh_token: refreshToken,
-      client_key: process.env.TIKTOK_CLIENT_KEY,
-      client_secret: process.env.TIKTOK_CLIENT_SECRET
+      client_key: config.platforms.tiktok.TIKTOK_CLIENT_KEY,
+      client_secret: config.platforms.tiktok.TIKTOK_CLIENT_SECRET
     });
     const newAccessToken = response.data.access_token;
     const expiresIn = response.data.expires_in;
@@ -44,9 +44,9 @@ async function getTikTokToken(config) {
   const tokenManager = new TokenManager('tiktok', config);
   const existingToken = tokenManager.getToken();
 
-  if (existingToken && DateTime.fromISO(existingToken.expiresAt) > DateTime.now().plus({ days: 5 })) {
-    log('INFO', `TikTokAuth: Using existing token: ${existingToken.token.substring(0, 10)}...`);
-    return existingToken.token;
+  if (tokenManager.isTokenValid()) {
+    log('INFO', `TikTokAuth: Using existing token: ${tokenManager.getToken().token.substring(0, 10)}...`);
+    return tokenManager.getToken().token;
   }
 
   if (existingToken && existingToken.refreshToken) {

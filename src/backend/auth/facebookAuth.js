@@ -1,8 +1,8 @@
 const prompts = require('prompts');
 const axios = require('axios');
 const { DateTime } = require('luxon');
-const { TokenManager, saveConfig } = require('./authUtils');
-const { log } = require('../logging/logUtils'); // Correct import
+const { TokenManager, saveConfig } = require('../utils/authUtils');
+const { log } = require('../utils/logUtils');
 
 async function promptForUserToken() {
   const { userAccessToken } = await prompts({
@@ -26,8 +26,8 @@ async function exchangeForLongLivedToken(shortLivedToken, config) {
     const response = await axios.get('https://graph.facebook.com/v20.0/oauth/access_token', {
       params: {
         grant_type: 'fb_exchange_token',
-        client_id: process.env.APP_ID,
-        client_secret: process.env.APP_SECRET,
+        client_id: config.platforms.facebook.APP_ID,
+        client_secret: config.platforms.facebook.APP_SECRET,
         fb_exchange_token: shortLivedToken
       }
     });
@@ -43,11 +43,10 @@ async function exchangeForLongLivedToken(shortLivedToken, config) {
 
 async function getFacebookToken(config) {
   const tokenManager = new TokenManager('facebook', config);
-  const existingToken = tokenManager.getToken();
 
-  if (existingToken && DateTime.fromISO(existingToken.expiresAt) > DateTime.now().plus({ days: 5 })) {
-    log('INFO', `FacebookAuth: Using existing token: ${existingToken.token.substring(0, 10)}...`);
-    return existingToken.token;
+  if (tokenManager.isTokenValid()) {
+    log('INFO', `FacebookAuth: Using existing token: ${tokenManager.getToken().token.substring(0, 10)}...`);
+    return tokenManager.getToken().token;
   }
 
   const shortLivedToken = await promptForUserToken();

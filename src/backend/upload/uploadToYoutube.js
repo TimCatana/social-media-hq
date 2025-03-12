@@ -1,6 +1,6 @@
 const axios = require('axios');
 const fs = require('fs').promises;
-const { log } = require('../logging/logUtils');
+const { log } = require('../utils/logUtils');
 
 async function postToYouTube(post) {
   const { imageUrl, caption, hashtags, location, duration, originalTime, accessToken, uploadHistoryPath, uploadedLogPath } = post;
@@ -21,7 +21,7 @@ async function postToYouTube(post) {
       {
         headers: {
           Authorization: `Bearer ${accessToken}`,
-          'Content-Type': 'video/mp4',
+          'Content-Type': 'video/*',
         },
         params: {
           uploadType: 'media',
