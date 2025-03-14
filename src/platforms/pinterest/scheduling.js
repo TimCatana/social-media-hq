@@ -1,7 +1,6 @@
 const { parseCsv } = require('../../utils/csvUtils');
 const { initializeSchedule } = require('../../utils/scheduleUtils');
 const { log } = require('../../utils/logUtils');
-const { getPinterestToken } = require('../../auth/pinterest');
 const axios = require('axios');
 
 async function uploadToPinterest(post, config, accessToken, verbose = false) {
@@ -10,21 +9,25 @@ async function uploadToPinterest(post, config, accessToken, verbose = false) {
     title: post.Title || '',
     description: `${post.Caption || ''} ${post.Hashtags || ''}`.trim(),
     link: post['External Link'] || '',
-    board_id: post['Board ID'] || config.platforms.pinterest?.DEFAULT_BOARD_ID,
+    board_id: post['Board ID'] || config.platforms.pinterest.DEFAULT_BOARD_ID,
     media_source: { source_type: 'image_url', url: post['Media URL'] },
     alt_text: post['Alt Text'] || '',
   };
-  if (!data.board_id) throw new Error('Board ID not provided in CSV or config');
-
-  if (verbose) {
-    log('VERBOSE', `Sending POST to ${url} with data: ${JSON.stringify(data, null, 2)}`);
-    log('VERBOSE', `Headers: ${JSON.stringify({ Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' }, null, 2)}`);
+  if (verbose) log('VERBOSE', `Sending POST to ${url} with body: ${JSON.stringify(data, null, 2)}`);
+  
+  try {
+    const response = await axios.post(url, data, {
+      headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+    });
+    return response.data.id;
+  } catch (error) {
+    const errorDetails = error.response
+      ? `Status: ${error.response.status}, Data: ${JSON.stringify(error.response.data, null, 2)}`
+      : error.message;
+    log('ERROR', `Failed to upload Pinterest pin: ${errorDetails}`);
+    if (verbose) log('VERBOSE', `Full upload error: ${JSON.stringify(error, null, 2)}`);
+    throw error;
   }
-
-  const response = await axios.post(url, data, {
-    headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
-  });
-  return response.data.id;
 }
 
 async function schedulePinterestPosts(csvPath, config, verbose = false) {

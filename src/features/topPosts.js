@@ -1,9 +1,12 @@
 const { promptForPlatform, promptForHashtag, promptForMetric } = require('../utils/promptUtils');
-const { METRICS } = require('../constants');
 const { log } = require('../utils/logUtils');
-const { loadConfig } = require('../utils/configUtils');
+const { METRICS } = require('../constants');
+const {
+  ensureFacebookAuth, ensureInstagramAuth, ensurePinterestAuth, ensureRumbleAuth,
+  ensureThreadsAuth, ensureTikTokAuth, ensureTwitterAuth, ensureYouTubeAuth,
+} = require('../utils/authUtils');
 
-const TOP_POSTS = {
+const FETCHERS = {
   facebook: require('../platforms/facebook/topPosts').getFacebookTopPosts,
   instagram: require('../platforms/instagram/topPosts').getInstagramTopPosts,
   pinterest: require('../platforms/pinterest/topPosts').getPinterestTopPosts,
@@ -14,20 +17,39 @@ const TOP_POSTS = {
   youtube: require('../platforms/youtube/topPosts').getYouTubeTopPosts,
 };
 
-async function handleTopPosts() {
-  const config = await loadConfig();
-  const platform = await promptForPlatform('top posts by hashtag');
+const AUTH_FUNCTIONS = {
+  facebook: ensureFacebookAuth,
+  instagram: ensureInstagramAuth,
+  pinterest: ensurePinterestAuth,
+  rumble: ensureRumbleAuth,
+  threads: ensureThreadsAuth,
+  tiktok: ensureTikTokAuth,
+  twitter: ensureTwitterAuth,
+  youtube: ensureYouTubeAuth,
+};
+
+async function handleTopPosts(config, verbose = false) {
+  const platform = await promptForPlatform('top posts');
   if (platform === 'back') return;
 
-  try {
-    const hashtag = await promptForHashtag(platform);
-    const metric = await promptForMetric(platform, METRICS[platform]);
+  // Authenticate first, before any other prompts
+  log('INFO', `Checking ${platform} authentication...`);
+  await AUTH_FUNCTIONS[platform](config);
 
-    log('INFO', `Retrieving top ${platform} posts for ${hashtag} sorted by ${metric}`);
-    const csvPath = await TOP_POSTS[platform](hashtag, metric, config);
-    log('INFO', `Top posts saved to ${csvPath}`);
+  const hashtag = await promptForHashtag(platform);
+  if (hashtag === 'back') return;
+
+  const metricChoices = METRICS[platform].map(m => ({ title: m, value: m }));
+  const metric = await promptForMetric(metricChoices);
+  if (metric === 'back') return;
+
+  try {
+    const filePath = await FETCHERS[platform](hashtag, metric, config, verbose);
+    log('INFO', `Wrote top ${platform} posts to ${filePath}`);
+    return filePath;
   } catch (error) {
-    log('ERROR', `Failed to retrieve ${platform} top posts: ${error.message}`);
+    log('ERROR', `Failed to fetch top ${platform} posts: ${error.message}`);
+    throw error;
   }
 }
 

@@ -1,36 +1,48 @@
 const { parseCsv } = require('../../utils/csvUtils');
 const { initializeSchedule } = require('../../utils/scheduleUtils');
 const { log } = require('../../utils/logUtils');
-const { getInstagramToken } = require('../../auth/instagram');
 const axios = require('axios');
 
 async function uploadToInstagram(post, config, accessToken, verbose = false) {
-  const igUserId = config.platforms.instagram?.INSTAGRAM_BUSINESS_ACCOUNT_ID;
-  if (!igUserId) throw new Error('Instagram Business Account ID not configured');
-
+  const igUserId = config.platforms.instagram.INSTAGRAM_BUSINESS_ACCOUNT_ID;
   const mediaUrl = `https://graph.facebook.com/v20.0/${igUserId}/media`;
-  const mediaParams = {
+  const mediaBody = {
     image_url: post['Media URL'],
     caption: `${post.Caption || ''} ${post.Hashtags || ''}`.trim(),
     access_token: accessToken,
   };
-
-  if (verbose) {
-    log('VERBOSE', `Sending POST to ${mediaUrl} with params: ${JSON.stringify(mediaParams, null, 2)}`);
+  if (verbose) log('VERBOSE', `Sending POST to ${mediaUrl} with body: ${JSON.stringify(mediaBody, null, 2)}`);
+  
+  let mediaResponse;
+  try {
+    mediaResponse = await axios.post(mediaUrl, mediaBody);
+  } catch (error) {
+    const errorDetails = error.response
+      ? `Status: ${error.response.status}, Data: ${JSON.stringify(error.response.data, null, 2)}`
+      : error.message;
+    log('ERROR', `Failed to create Instagram media: ${errorDetails}`);
+    if (verbose) log('VERBOSE', `Full media creation error: ${JSON.stringify(error, null, 2)}`);
+    throw error;
   }
-
-  const mediaResponse = await axios.post(mediaUrl, null, { params: mediaParams });
 
   const publishUrl = `https://graph.facebook.com/v20.0/${igUserId}/media_publish`;
-  const publishParams = { creation_id: mediaResponse.data.id, access_token: accessToken };
-
-  if (verbose) {
-    log('VERBOSE', `Sending POST to ${publishUrl} with params: ${JSON.stringify(publishParams, null, 2)}`);
+  const publishBody = {
+    creation_id: mediaResponse.data.id,
+    access_token: accessToken,
+  };
+  if (verbose) log('VERBOSE', `Sending POST to ${publishUrl} with body: ${JSON.stringify(publishBody, null, 2)}`);
+  
+  try {
+    const publishResponse = await axios.post(publishUrl, publishBody);
+    return publishResponse.data.id;
+  } catch (error) {
+    const errorDetails = error.response
+      ? `Status: ${error.response.status}, Data: ${JSON.stringify(error.response.data, null, 2)}`
+      : error.message;
+    log('ERROR', `Failed to publish Instagram media: ${errorDetails}`);
+    if (verbose) log('VERBOSE', `Full publish error: ${JSON.stringify(error, null, 2)}`);
+    throw error;
   }
-
-  const publishResponse = await axios.post(publishUrl, null, { params: publishParams });
-
-  return publishResponse.data.id;
 }
 
 async function scheduleInstagramPosts(csvPath, config, verbose = false) {

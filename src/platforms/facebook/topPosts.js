@@ -1,20 +1,20 @@
 const { fetchPaginatedData } = require('../../utils/apiUtils');
 const { writeCsv } = require('../../utils/csvUtils');
 const { log } = require('../../utils/logUtils');
-const { getFacebookToken } = require('../../auth/facebook');
 const { csvHeaderTopPosts, mapTopPostToCsvRow } = require('./config');
 const { METRICS } = require('../../constants');
+const axios = require('axios');
 
 async function getFacebookTopPosts(hashtag, metric, config, verbose = false) {
-  const accessToken = await getFacebookToken(config);
   if (!METRICS.facebook.includes(metric)) {
     log('WARN', `Invalid metric '${metric}' for Facebook; defaulting to 'engagement'`);
     metric = 'engagement';
   }
 
   try {
-    const pageId = config.platforms.facebook.PAGE_ID || 'me';
+    const pageId = config.platforms.facebook.PAGE_ID;
     const url = `https://graph.facebook.com/v20.0/${pageId}/posts`;
+    const accessToken = config.tokens.facebook.token;
     const posts = await fetchPaginatedData(url, {
       fields: 'id,created_time,message,permalink_url,reactions.summary(total_count),comments.summary(total_count),shares',
       limit: 100,

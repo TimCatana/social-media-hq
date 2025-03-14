@@ -1,12 +1,11 @@
 const { fetchPaginatedData } = require('../../utils/apiUtils');
 const { writeCsv } = require('../../utils/csvUtils');
 const { log } = require('../../utils/logUtils');
-const { getFacebookToken } = require('../../auth/facebook');
 const { csvHeader, mapPostToCsvRow, apiFields } = require('./config');
 const { METRICS } = require('../../constants');
+const axios = require('axios');
 
 async function getFacebookAccountPosts(account, isMyAccount, metric, config, verbose = false) {
-  const accessToken = await getFacebookToken(config);
   if (!METRICS.facebook.includes(metric)) {
     log('WARN', `Invalid metric '${metric}' for Facebook; defaulting to 'likes'`);
     metric = 'likes';
@@ -15,6 +14,7 @@ async function getFacebookAccountPosts(account, isMyAccount, metric, config, ver
   try {
     const pageId = isMyAccount ? config.platforms.facebook.PAGE_ID : account.replace('@', '');
     const url = `https://graph.facebook.com/v20.0/${pageId}/posts`;
+    const accessToken = config.tokens.facebook.token;
     const posts = await fetchPaginatedData(url, { fields: apiFields, limit: 100 }, accessToken, verbose);
 
     const postData = posts.map(post => ({

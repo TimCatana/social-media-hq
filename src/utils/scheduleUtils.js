@@ -26,16 +26,16 @@ async function initializeSchedule(csvPath, posts, platform, verbose = false) {
       .map(p => DateTime.fromISO(p['Publish Date']));
     const lastDate = scheduledDates.length ? DateTime.max(...scheduledDates) : DateTime.now();
 
+    // Reschedule failed posts from previous runs
     for (const post of scheduleData.posts) {
-      if (post.status === 'pending' || post.status === 'success') continue;
-      const originalDate = DateTime.fromISO(post['Publish Date']);
-      if (originalDate < DateTime.now()) {
-        const daysSince = Math.ceil(DateTime.now().diff(originalDate, 'days').days);
+      if (post.status === 'failed') {
+        const originalDate = DateTime.fromISO(post['Publish Date']);
+        const daysSince = Math.ceil(DateTime.now().diff(originalDate, 'days').days) || 1; // At least 1 day
         const newDate = lastDate.plus({ days: daysSince });
-        post['Publish Date'] = newDate.toISO();
+        post['Publish Date'] = newDate.toFormat("yyyy-MM-dd'T'HH:mm:ss");
         post.status = 'pending';
         post.attempts = 0;
-        log('INFO', `Rescheduled past/failed post from ${originalDate.toISO()} to ${newDate.toISO()}`);
+        log('INFO', `Rescheduled failed post from ${originalDate.toISO()} to ${newDate.toISO()}`);
       }
     }
   } catch (error) {
@@ -61,7 +61,7 @@ async function initializeSchedule(csvPath, posts, platform, verbose = false) {
   await fs.mkdir(SCHEDULED_DIR, { recursive: true });
   await fs.writeFile(jsonPath, JSON.stringify(scheduleData, null, 2));
   log('INFO', `Scheduled ${scheduleData.posts.length} posts in ${jsonPath}`);
-  return scheduleData.posts.length;
+  return scheduleData;
 }
 
 async function startScheduler(config, verbose = false) {
@@ -87,17 +87,22 @@ async function startScheduler(config, verbose = false) {
     return tokens[platform];
   };
 
+  const files = await fs.readdir(SCHEDULED_DIR);
+  const jsonFiles = files.filter(f => f.endsWith('.json'));
+
+  if (jsonFiles.length === 0) {
+    log('INFO', 'No schedules to process');
+    return;
+  }
+
   return new Promise(resolve => {
     const interval = setInterval(async () => {
       try {
-        const files = await fs.readdir(SCHEDULED_DIR);
-        const jsonFiles = files.filter(f => f.endsWith('.json'));
-
         let allPostsDone = true;
 
         for (const jsonFile of jsonFiles) {
           const jsonPath = path.join(SCHEDULED_DIR, jsonFile);
-          const scheduleData = JSON.parse(await fs.readFile(jsonPath, 'utf8'));
+          let scheduleData = JSON.parse(await fs.readFile(jsonPath, 'utf8'));
           const { platform, posts } = scheduleData;
           const uploadFn = uploadFunctions[platform];
 
@@ -112,15 +117,15 @@ async function startScheduler(config, verbose = false) {
             if (post.status !== 'pending') continue;
 
             allPostsDone = false;
-
             const publishDate = DateTime.fromISO(post['Publish Date']);
             const now = DateTime.now();
+            const timeDiff = publishDate.diff(now, 'minutes').minutes;
 
-            if (publishDate <= now) {
+            if (timeDiff <= 0 && timeDiff >= -1) { // At or past scheduled time, up to 1 minute late
               try {
-                log('INFO', `Uploading ${platform} post scheduled for ${post['Publish Date']}`);
+                log('INFO', `Uploading ${platform} post ${i + 1}/${posts.length} scheduled for ${post['Publish Date']}`);
                 const accessToken = await getToken(platform);
-                const result = await uploadFn(post, config, accessToken, verbose); // Pass verbose
+                const result = await uploadFn(post, config, accessToken, verbose);
                 post.status = 'success';
                 post.result = result;
                 post.attempts = (post.attempts || 0) + 1;
@@ -132,15 +137,14 @@ async function startScheduler(config, verbose = false) {
               } catch (error) {
                 post.status = 'failed';
                 post.attempts = (post.attempts || 0) + 1;
-                const errorMsg = `Failed to upload ${platform} post for ${post['Publish Date']}: ${error.message}`;
-                log('ERROR', errorMsg);
-                scheduleData.logs.push({ timestamp: now.toISO(), level: 'ERROR', message: errorMsg });
+                const errorDetails = error.response
+                  ? `Status: ${error.response.status}, Data: ${JSON.stringify(error.response.data, null, 2)}`
+                  : error.message;
+                log('ERROR', `Failed to upload ${platform} post ${i + 1}/${posts.length} for ${post['Publish Date']}: ${errorDetails}`);
+                if (verbose) log('VERBOSE', `Full error details: ${JSON.stringify(error, null, 2)}`);
+                scheduleData.logs.push({ timestamp: now.toISO(), level: 'ERROR', message: errorDetails });
                 updated = true;
-              }
-
-              if (updated) {
-                await fs.writeFile(jsonPath, JSON.stringify(scheduleData, null, 2));
-                updated = false;
+                // Do not reschedule here; leave as failed
               }
             }
           }
@@ -157,9 +161,13 @@ async function startScheduler(config, verbose = false) {
           resolve();
         }
       } catch (error) {
-        log('ERROR', `Scheduler error: ${error.message}`);
+        const errorDetails = error.response
+          ? `Status: ${error.response.status}, Data: ${JSON.stringify(error.response.data, null, 2)}`
+          : error.message;
+        log('ERROR', `Scheduler error: ${errorDetails}`);
+        if (verbose) log('VERBOSE', `Full scheduler error details: ${JSON.stringify(error, null, 2)}`);
       }
-    }, 60000);
+    }, 60000); // Check every minute
   });
 }
 

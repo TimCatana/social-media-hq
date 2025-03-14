@@ -1,7 +1,6 @@
 const { parseCsv } = require('../../utils/csvUtils');
 const { initializeSchedule } = require('../../utils/scheduleUtils');
 const { log } = require('../../utils/logUtils');
-const { getTikTokToken } = require('../../auth/tiktok');
 const axios = require('axios');
 
 async function uploadToTikTok(post, config, accessToken, verbose = false) {
@@ -10,16 +9,21 @@ async function uploadToTikTok(post, config, accessToken, verbose = false) {
     video_url: post['Media URL'],
     caption: `${post.Caption || ''} ${post.Hashtags || ''}`.trim(),
   };
-
-  if (verbose) {
-    log('VERBOSE', `Sending POST to ${url} with data: ${JSON.stringify(data, null, 2)}`);
-    log('VERBOSE', `Headers: ${JSON.stringify({ Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' }, null, 2)}`);
+  if (verbose) log('VERBOSE', `Sending POST to ${url} with body: ${JSON.stringify(data, null, 2)}`);
+  
+  try {
+    const response = await axios.post(url, data, {
+      headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+    });
+    return response.data.id;
+  } catch (error) {
+    const errorDetails = error.response
+      ? `Status: ${error.response.status}, Data: ${JSON.stringify(error.response.data, null, 2)}`
+      : error.message;
+    log('ERROR', `Failed to upload TikTok video: ${errorDetails}`);
+    if (verbose) log('VERBOSE', `Full upload error: ${JSON.stringify(error, null, 2)}`);
+    throw error;
   }
-
-  const response = await axios.post(url, data, {
-    headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
-  });
-  return response.data.id;
 }
 
 async function scheduleTikTokPosts(csvPath, config, verbose = false) {
